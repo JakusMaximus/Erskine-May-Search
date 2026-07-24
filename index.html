@@ -13,7 +13,7 @@
       line-height: 1.6;
       color: #333;
     }
-    h1 { color: #005a36; }
+    h1 { color: #005a36; } /* UK Parliament Green */
     .search-box {
       display: flex;
       gap: 10px;
@@ -39,15 +39,21 @@
     .result-card {
       background: #f9f9f9;
       border-left: 4px solid #005a36;
-      padding: 15px 20px;
-      margin-bottom: 15px;
+      padding: 18px 22px;
+      margin-bottom: 20px;
       border-radius: 0 6px 6px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-    .ref-tag {
+    .ref-header {
       font-weight: bold;
       color: #005a36;
-      font-size: 0.95em;
-      margin-bottom: 6px;
+      font-size: 1.1em;
+      margin-bottom: 10px;
+      border-bottom: 1px solid #e0e0e0;
+      padding-bottom: 6px;
+    }
+    .content-body p {
+      margin-top: 0;
     }
     .loading { color: #666; font-style: italic; }
   </style>
@@ -83,39 +89,28 @@
         if (!response.ok) throw new Error('API request failed');
 
         const rawData = await response.json();
-        console.log("API Response Raw Data:", rawData); // Check browser F12 console to see raw payload
 
-        // Find where the array lives in the API response
-        let results = [];
-        if (Array.isArray(rawData)) {
-          results = rawData;
-        } else if (rawData.items && Array.isArray(rawData.items)) {
-          results = rawData.items;
-        } else if (rawData.results && Array.isArray(rawData.results)) {
-          results = rawData.results;
-        } else if (rawData.searchResults && Array.isArray(rawData.searchResults)) {
-          results = rawData.searchResults;
-        }
+        // The API returns { searchResults: [ ... ] }
+        const results = rawData.searchResults || rawData;
 
-        if (results.length === 0) {
-          container.innerHTML = '<p>No matching paragraphs found.</p>';
+        if (!results || results.length === 0) {
+          container.innerHTML = '<p>No matching paragraphs found for that term.</p>';
           return;
         }
 
-        let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
+        let html = `<p>Found <strong>${results.length}</strong> matching paragraph(s):</p>`;
 
-        results.slice(0, 20).forEach((item, index) => {
-          // Extract title/reference flexibly
-          const paraNum = item.paragraphNumber || item.paragraphPrefix || item.number || item.id || `#${index + 1}`;
-          const title = item.title || item.heading || item.chapterTitle || '';
+        results.slice(0, 20).forEach(item => {
+          // Extract exact field names from Parliament API response
+          const reference = item.reference || item.paragraphPrefix || 'Unnumbered Paragraph';
           
-          // Extract paragraph content flexibly
-          const content = item.content || item.text || item.html || item.snippet || item.contentText || 'Text preview unavailable for this entry.';
+          // Get paragraph text (HTML formatted or fallback raw text)
+          const textContent = item.contentTextHtml || item.contentText || item.text || item.content || 'No text content provided by API.';
 
           html += `
             <div class="result-card">
-              <div class="ref-tag">Paragraph ${paraNum} ${title ? '— ' + title : ''}</div>
-              <div>${content}</div>
+              <div class="ref-header">Paragraph ${reference}</div>
+              <div class="content-body">${textContent}</div>
             </div>
           `;
         });
@@ -124,7 +119,7 @@
 
       } catch (err) {
         console.error(err);
-        container.innerHTML = '<p style="color:red;">Error fetching data from Erskine May API. Make sure CORS/Network allows request.</p>';
+        container.innerHTML = '<p style="color:red;">Error fetching data from Erskine May API. Make sure the API is accessible.</p>';
       }
     }
 
