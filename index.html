@@ -7,13 +7,14 @@
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      max-width: 800px;
+      max-width: 850px;
       margin: 40px auto;
       padding: 0 20px;
       line-height: 1.6;
       color: #333;
     }
-    h1 { color: #005a36; } /* UK Parliament Green */
+    h1 { color: #005a36; margin-bottom: 5px; } /* UK Parliament Green */
+    .subtitle { color: #666; margin-top: 0; margin-bottom: 25px; }
     .search-box {
       display: flex;
       gap: 10px;
@@ -38,22 +39,40 @@
     button:hover { background-color: #004026; }
     .result-card {
       background: #f9f9f9;
-      border-left: 4px solid #005a36;
-      padding: 18px 22px;
+      border-left: 5px solid #005a36;
+      padding: 20px;
       margin-bottom: 20px;
-      border-radius: 0 6px 6px 0;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      border-radius: 0 8px 8px 0;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.06);
     }
     .ref-header {
       font-weight: bold;
       color: #005a36;
-      font-size: 1.1em;
-      margin-bottom: 8px;
-      border-bottom: 1px solid #e0e0e0;
-      padding-bottom: 6px;
+      font-size: 1.15em;
+      margin-bottom: 10px;
     }
-    .content-body p {
-      margin: 6px 0;
+    .read-btn {
+      margin-top: 15px;
+      padding: 8px 14px;
+      font-size: 14px;
+      background-color: #ffffff;
+      color: #005a36;
+      border: 1px solid #005a36;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .read-btn:hover {
+      background-color: #005a36;
+      color: white;
+    }
+    .full-content {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px dashed #ccc;
+      background-color: #ffffff;
+      padding: 15px;
+      border-radius: 6px;
     }
     .loading { color: #666; font-style: italic; }
   </style>
@@ -61,44 +80,16 @@
 <body>
 
   <h1>Erskine May Search</h1>
-  <p>Search paragraphs in Erskine May (Parliamentary Procedure Guide).</p>
+  <p class="subtitle">Search the official guide to UK Parliamentary Procedure</p>
 
   <div class="search-box">
-    <input type="text" id="searchInput" placeholder="e.g. casting vote, privilege, speaker..." onkeypress="handleKey(event)">
+    <input type="text" id="searchInput" placeholder="e.g. financial privilege, casting vote, speaker..." onkeypress="handleKey(event)">
     <button onclick="searchErskineMay()">Search</button>
   </div>
 
   <div id="resultsContainer"></div>
 
   <script>
-    // Helper function to pull text out of nested API fields safely
-    function extractText(item) {
-      if (typeof item === 'string') return item;
-      if (!item) return null;
-
-      // Check all common API text field variations
-      return item.contentTextHtml || 
-             item.contentText || 
-             item.htmlContent || 
-             item.snippet || 
-             item.text || 
-             item.content || 
-             item.title ||
-             item.description ||
-             (item.paragraph && extractText(item.paragraph)) ||
-             null;
-    }
-
-    // Helper function to extract paragraph reference or ID
-    function extractRef(item, index) {
-      if (item.reference) return item.reference;
-      if (item.paragraphNumber) return item.paragraphNumber;
-      if (item.paragraphPrefix) return item.paragraphPrefix;
-      if (item.paragraph && item.paragraph.reference) return item.paragraph.reference;
-      if (item.id) return `#${item.id}`;
-      return `#${index + 1}`;
-    }
-
     async function searchErskineMay() {
       const query = document.getElementById('searchInput').value.trim();
       const container = document.getElementById('resultsContainer');
@@ -114,42 +105,29 @@
         const url = `https://erskinemay-api.parliament.uk/api/Search/ParagraphSearchResults/${encodeURIComponent(query)}`;
         const response = await fetch(url);
 
-        if (!response.ok) throw new Error(`API error HTTP ${response.status}`);
+        if (!response.ok) throw new Error('API search failed');
 
-        const rawData = await response.json();
-        console.log("Full Response Object:", rawData);
+        const data = await response.json();
+        const results = data.searchResults || [];
 
-        // Find array anywhere inside the response object
-        let list = [];
-        if (Array.isArray(rawData)) {
-          list = rawData;
-        } else {
-          list = rawData.searchResults || rawData.items || rawData.results || rawData.paragraphs || [];
-        }
-
-        if (!list || list.length === 0) {
-          container.innerHTML = '<p>No matching paragraphs found for that search term.</p>';
+        if (results.length === 0) {
+          container.innerHTML = '<p>No matching paragraphs found.</p>';
           return;
         }
 
-        let html = `<p>Found <strong>${list.length}</strong> result(s):</p>`;
+        let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
 
-        list.forEach((item, idx) => {
-          const ref = extractRef(item, idx);
-          let body = extractText(item);
-
-          // Fallback if item is an object with nested values we didn't explicitly catch
-          if (!body && typeof item === 'object') {
-            const possibleValues = Object.values(item).filter(v => typeof v === 'string' && v.length > 10);
-            if (possibleValues.length > 0) body = possibleValues.join('<br><br>');
-          }
-
-          if (!body) body = '<em>(Paragraph metadata found, but no text body returned for this search match)</em>';
+        results.forEach((item, index) => {
+          // Get reference (e.g. "21.3" or section name)
+          const ref = item.reference || item.paragraphPrefix || `Result #${index + 1}`;
+          const snippetText = item.contentTextHtml || item.contentText || '';
 
           html += `
             <div class="result-card">
               <div class="ref-header">Paragraph ${ref}</div>
-              <div class="content-body">${body}</div>
+              <div class="snippet">${snippetText}</div>
+              <button class="read-btn" onclick="fetchFullParagraph('${ref}', this)">Read Full Explanation</button>
+              <div class="full-content" id="full-${index}" style="display:none;"></div>
             </div>
           `;
         });
@@ -158,7 +136,51 @@
 
       } catch (err) {
         console.error(err);
-        container.innerHTML = `<p style="color:red;">Error fetching data: ${err.message}. Make sure the API URL is accessible.</p>`;
+        container.innerHTML = '<p style="color:red;">Error fetching search results from Erskine May API.</p>';
+      }
+    }
+
+    async function fetchFullParagraph(ref, buttonElem) {
+      const parentCard = buttonElem.parentElement;
+      let fullDiv = parentCard.querySelector('.full-content');
+
+      // Toggle display if already loaded
+      if (fullDiv.style.display === 'block') {
+        fullDiv.style.display = 'none';
+        buttonElem.innerText = 'Read Full Explanation';
+        return;
+      }
+
+      buttonElem.innerText = 'Loading full text...';
+
+      try {
+        // Fetch full detail for this exact paragraph reference
+        const response = await fetch(`https://erskinemay-api.parliament.uk/api/Search/Paragraph/${encodeURIComponent(ref)}`);
+        
+        if (!response.ok) throw new Error('Could not load full text');
+
+        const fullData = await response.json();
+        
+        // Extract paragraph text or html content from returned detail payload
+        let fullHtml = fullData.contentTextHtml || fullData.contentText || fullData.htmlContent || fullData.content || '';
+
+        // If the endpoint returns sub-paragraphs/sections
+        if (!fullHtml && fullData.sections) {
+          fullHtml = fullData.sections.map(s => s.contentTextHtml || s.contentText || '').join('<br><br>');
+        }
+
+        if (!fullHtml) {
+          fullHtml = '<p><em>Full text unavailable for this specific section reference.</em></p>';
+        }
+
+        fullDiv.innerHTML = fullHtml;
+        fullDiv.style.display = 'block';
+        buttonElem.innerText = 'Hide Full Explanation';
+
+      } catch (err) {
+        console.error(err);
+        buttonElem.innerText = 'Read Full Explanation';
+        alert('Could not fetch the full paragraph text. Please try another entry.');
       }
     }
 
