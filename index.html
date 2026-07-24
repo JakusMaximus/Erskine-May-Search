@@ -42,18 +42,18 @@
       padding: 18px 22px;
       margin-bottom: 20px;
       border-radius: 0 6px 6px 0;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .ref-header {
       font-weight: bold;
       color: #005a36;
       font-size: 1.1em;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       border-bottom: 1px solid #e0e0e0;
       padding-bottom: 6px;
     }
     .content-body p {
-      margin-top: 0;
+      margin: 6px 0;
     }
     .loading { color: #666; font-style: italic; }
   </style>
@@ -71,6 +71,34 @@
   <div id="resultsContainer"></div>
 
   <script>
+    // Helper function to pull text out of nested API fields safely
+    function extractText(item) {
+      if (typeof item === 'string') return item;
+      if (!item) return null;
+
+      // Check all common API text field variations
+      return item.contentTextHtml || 
+             item.contentText || 
+             item.htmlContent || 
+             item.snippet || 
+             item.text || 
+             item.content || 
+             item.title ||
+             item.description ||
+             (item.paragraph && extractText(item.paragraph)) ||
+             null;
+    }
+
+    // Helper function to extract paragraph reference or ID
+    function extractRef(item, index) {
+      if (item.reference) return item.reference;
+      if (item.paragraphNumber) return item.paragraphNumber;
+      if (item.paragraphPrefix) return item.paragraphPrefix;
+      if (item.paragraph && item.paragraph.reference) return item.paragraph.reference;
+      if (item.id) return `#${item.id}`;
+      return `#${index + 1}`;
+    }
+
     async function searchErskineMay() {
       const query = document.getElementById('searchInput').value.trim();
       const container = document.getElementById('resultsContainer');
@@ -86,31 +114,42 @@
         const url = `https://erskinemay-api.parliament.uk/api/Search/ParagraphSearchResults/${encodeURIComponent(query)}`;
         const response = await fetch(url);
 
-        if (!response.ok) throw new Error('API request failed');
+        if (!response.ok) throw new Error(`API error HTTP ${response.status}`);
 
         const rawData = await response.json();
+        console.log("Full Response Object:", rawData);
 
-        // The API returns { searchResults: [ ... ] }
-        const results = rawData.searchResults || rawData;
+        // Find array anywhere inside the response object
+        let list = [];
+        if (Array.isArray(rawData)) {
+          list = rawData;
+        } else {
+          list = rawData.searchResults || rawData.items || rawData.results || rawData.paragraphs || [];
+        }
 
-        if (!results || results.length === 0) {
-          container.innerHTML = '<p>No matching paragraphs found for that term.</p>';
+        if (!list || list.length === 0) {
+          container.innerHTML = '<p>No matching paragraphs found for that search term.</p>';
           return;
         }
 
-        let html = `<p>Found <strong>${results.length}</strong> matching paragraph(s):</p>`;
+        let html = `<p>Found <strong>${list.length}</strong> result(s):</p>`;
 
-        results.slice(0, 20).forEach(item => {
-          // Extract exact field names from Parliament API response
-          const reference = item.reference || item.paragraphPrefix || 'Unnumbered Paragraph';
-          
-          // Get paragraph text (HTML formatted or fallback raw text)
-          const textContent = item.contentTextHtml || item.contentText || item.text || item.content || 'No text content provided by API.';
+        list.forEach((item, idx) => {
+          const ref = extractRef(item, idx);
+          let body = extractText(item);
+
+          // Fallback if item is an object with nested values we didn't explicitly catch
+          if (!body && typeof item === 'object') {
+            const possibleValues = Object.values(item).filter(v => typeof v === 'string' && v.length > 10);
+            if (possibleValues.length > 0) body = possibleValues.join('<br><br>');
+          }
+
+          if (!body) body = '<em>(Paragraph metadata found, but no text body returned for this search match)</em>';
 
           html += `
             <div class="result-card">
-              <div class="ref-header">Paragraph ${reference}</div>
-              <div class="content-body">${textContent}</div>
+              <div class="ref-header">Paragraph ${ref}</div>
+              <div class="content-body">${body}</div>
             </div>
           `;
         });
@@ -119,7 +158,7 @@
 
       } catch (err) {
         console.error(err);
-        container.innerHTML = '<p style="color:red;">Error fetching data from Erskine May API. Make sure the API is accessible.</p>';
+        container.innerHTML = `<p style="color:red;">Error fetching data: ${err.message}. Make sure the API URL is accessible.</p>`;
       }
     }
 
