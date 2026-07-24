@@ -66,7 +66,6 @@
       margin-bottom: 12px;
       font-size: 15px;
     }
-    /* Highlight styles for the matched term */
     .snippet-text strong {
       background-color: #e6f3ed;
       color: #005a36;
@@ -98,26 +97,21 @@
   <div id="resultsContainer"></div>
 
   <script>
-    // Utility to strip HTML tags to prevent messy paragraph breaks
     function stripHtml(html) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       return doc.body.textContent || "";
     }
 
-    // Snippet generator: finds the query, extracts surrounding text, and highlights words
     function createSnippet(text, query) {
       if (!text) return "No text available.";
       
       const plainText = stripHtml(text);
       const lowerText = plainText.toLowerCase();
-      
-      // Allow for fuzzy matching by splitting words
       const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 2);
       
       let matchIndex = lowerText.indexOf(query.toLowerCase());
       let matchedTerm = query;
 
-      // Fallback: If exact phrase isn't found, find the first relevant word
       if (matchIndex === -1 && queryWords.length > 0) {
         for (const word of queryWords) {
           const idx = lowerText.indexOf(word);
@@ -130,27 +124,23 @@
       }
 
       if (matchIndex === -1) {
-        return plainText.substring(0, 250) + "..."; // Fallback snippet if term isn't in body text
+        return plainText.substring(0, 250) + "...";
       }
 
-      // Extract roughly 150 characters on either side to simulate sentence boundaries
       const windowStart = Math.max(0, matchIndex - 150);
       const windowEnd = Math.min(plainText.length, matchIndex + matchedTerm.length + 150);
       
       let snippet = plainText.substring(windowStart, windowEnd);
       
-      // Add ellipses
       if (windowStart > 0) snippet = "..." + snippet;
       if (windowEnd < plainText.length) snippet = snippet + "...";
 
-      // Highlight the matched query words
       const highlightRegex = new RegExp(`(${queryWords.join('|')})`, 'gi');
       snippet = snippet.replace(highlightRegex, '<strong>$1</strong>');
 
       return snippet;
     }
 
-    // Function to search through nested API object keys for the longest string (the paragraph body)
     function extractTextFromObject(obj) {
       let longestText = "";
       function recurse(o) {
@@ -180,7 +170,6 @@
       container.innerHTML = '<p class="loading">Searching Erskine May API...</p>';
 
       try {
-        // Step 1: Hit the main search endpoint to get the matching paragraph references
         const searchUrl = `https://erskinemay-api.parliament.uk/api/Search/ParagraphSearchResults/${encodeURIComponent(query)}`;
         const response = await fetch(searchUrl);
 
@@ -195,22 +184,16 @@
           return;
         }
 
-        container.innerHTML = `<p class="loading">Found ${results.length} results. Generating snippets...</p>`;
         let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
-
-        // Process top 20 results to avoid overloading the API
         const topResults = results.slice(0, 20);
         
-        // Step 2: Fetch the full details for each result concurrently
         const detailedResults = await Promise.all(topResults.map(async (item) => {
           const p = item.paragraph || item;
           const ref = p.reference || p.paragraphPrefix || p.number || p.id || '';
           const title = p.title || p.chapterTitle || p.sectionTitle || p.heading || 'Erskine May Section';
           
           let fullText = extractTextFromObject(item);
-          let linkUrl = "#";
 
-          // If the search result didn't contain the full text, fetch the specific paragraph endpoint
           if (ref && fullText.length < 100) {
             try {
               const paraUrl = `https://erskinemay-api.parliament.uk/api/Search/Paragraph/${encodeURIComponent(ref)}`;
@@ -218,23 +201,21 @@
               if (paraRes.ok) {
                 const paraData = await paraRes.json();
                 fullText = extractTextFromObject(paraData) || fullText;
-                if (paraData.url) linkUrl = paraData.url;
               }
             } catch (e) {
               console.warn("Could not fetch paragraph details for", ref);
             }
           }
 
-          // Fallback URL if the API doesn't provide a direct link to the section
-          if (linkUrl === "#" && ref) {
-              linkUrl = `https://erskinemay.parliament.uk/search?q=${encodeURIComponent(query)}`;
-          }
+          // Generate direct link to official web search using the paragraph reference or query
+          const linkUrl = ref 
+            ? `https://erskinemay.parliament.uk/search?searchText=${encodeURIComponent(ref)}` 
+            : `https://erskinemay.parliament.uk/search?searchText=${encodeURIComponent(query)}`;
 
           return { ref, title, fullText, linkUrl };
         }));
 
-        // Step 3: Render the UI with snippets
-        detailedResults.forEach((res, index) => {
+        detailedResults.forEach((res) => {
           let headerText = res.ref ? `Paragraph ${res.ref} — ${res.title}` : res.title;
           const snippet = createSnippet(res.fullText, query);
 
