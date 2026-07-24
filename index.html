@@ -44,6 +44,7 @@
       font-weight: 600;
     }
     button:hover { background-color: #004026; }
+    button:disabled { background-color: #999; cursor: not-allowed; }
 
     .result-card {
       background: #ffffff;
@@ -59,14 +60,28 @@
       color: #005a36;
       font-size: 1.1em;
       margin-bottom: 10px;
-      padding-bottom: 6px;
-      border-bottom: 1px solid #f0f0f0;
     }
     .snippet-text {
       color: #333;
       margin-bottom: 12px;
       font-size: 15px;
     }
+    /* Highlight styles for the matched term */
+    .snippet-text strong {
+      background-color: #e6f3ed;
+      color: #005a36;
+      padding: 0 3px;
+      border-radius: 3px;
+    }
+    .read-more {
+      display: inline-block;
+      margin-top: 10px;
+      color: #005a36;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .read-more:hover { text-decoration: underline; }
     .loading { color: #666; font-style: italic; }
   </style>
 </head>
@@ -76,62 +91,158 @@
   <p class="subtitle">Search the official guide to UK Parliamentary Procedure</p>
 
   <div class="search-box">
-    <input type="text" id="searchInput" placeholder="e.g. financial privilege, casting vote, speaker..." onkeypress="handleKey(event)">
-    <button onclick="searchErskineMay()">Search</button>
+    <input type="text" id="searchInput" placeholder="e.g. financial privilege..." onkeypress="handleKey(event)">
+    <button id="searchBtn" onclick="searchErskineMay()">Search</button>
   </div>
 
   <div id="resultsContainer"></div>
 
   <script>
+    // Utility to strip HTML tags to prevent messy paragraph breaks
+    function stripHtml(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return doc.body.textContent || "";
+    }
+
+    // Snippet generator: finds the query, extracts surrounding text, and highlights words
+    function createSnippet(text, query) {
+      if (!text) return "No text available.";
+      
+      const plainText = stripHtml(text);
+      const lowerText = plainText.toLowerCase();
+      
+      // Allow for fuzzy matching by splitting words
+      const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 2);
+      
+      let matchIndex = lowerText.indexOf(query.toLowerCase());
+      let matchedTerm = query;
+
+      // Fallback: If exact phrase isn't found, find the first relevant word
+      if (matchIndex === -1 && queryWords.length > 0) {
+        for (const word of queryWords) {
+          const idx = lowerText.indexOf(word);
+          if (idx !== -1) {
+            matchIndex = idx;
+            matchedTerm = word;
+            break;
+          }
+        }
+      }
+
+      if (matchIndex === -1) {
+        return plainText.substring(0, 250) + "..."; // Fallback snippet if term isn't in body text
+      }
+
+      // Extract roughly 150 characters on either side to simulate sentence boundaries
+      const windowStart = Math.max(0, matchIndex - 150);
+      const windowEnd = Math.min(plainText.length, matchIndex + matchedTerm.length + 150);
+      
+      let snippet = plainText.substring(windowStart, windowEnd);
+      
+      // Add ellipses
+      if (windowStart > 0) snippet = "..." + snippet;
+      if (windowEnd < plainText.length) snippet = snippet + "...";
+
+      // Highlight the matched query words
+      const highlightRegex = new RegExp(`(${queryWords.join('|')})`, 'gi');
+      snippet = snippet.replace(highlightRegex, '<strong>$1</strong>');
+
+      return snippet;
+    }
+
+    // Function to search through nested API object keys for the longest string (the paragraph body)
+    function extractTextFromObject(obj) {
+      let longestText = "";
+      function recurse(o) {
+        if (typeof o === 'string') {
+          if (o.length > longestText.length && o.length > 50) longestText = o;
+        } else if (typeof o === 'object' && o !== null) {
+          for (let key in o) {
+            recurse(o[key]);
+          }
+        }
+      }
+      recurse(obj);
+      return longestText;
+    }
+
     async function searchErskineMay() {
       const query = document.getElementById('searchInput').value.trim();
       const container = document.getElementById('resultsContainer');
+      const btn = document.getElementById('searchBtn');
 
       if (!query) {
         container.innerHTML = '<p>Please enter a search term.</p>';
         return;
       }
 
+      btn.disabled = true;
       container.innerHTML = '<p class="loading">Searching Erskine May API...</p>';
 
       try {
-        const url = `https://erskinemay-api.parliament.uk/api/Search/ParagraphSearchResults/${encodeURIComponent(query)}`;
-        const response = await fetch(url);
+        // Step 1: Hit the main search endpoint to get the matching paragraph references
+        const searchUrl = `https://erskinemay-api.parliament.uk/api/Search/ParagraphSearchResults/${encodeURIComponent(query)}`;
+        const response = await fetch(searchUrl);
 
         if (!response.ok) throw new Error('Search request failed');
 
         const rawData = await response.json();
-        
-        // Erskine May returns items either directly in array or in searchResults
-        const results = Array.isArray(rawData) ? rawData : (rawData.searchResults || rawData.items || []);
+        let results = Array.isArray(rawData) ? rawData : (rawData.searchResults || rawData.items || []);
 
         if (!results || results.length === 0) {
           container.innerHTML = '<p>No matching paragraphs found for that term.</p>';
+          btn.disabled = false;
           return;
         }
 
+        container.innerHTML = `<p class="loading">Found ${results.length} results. Generating snippets...</p>`;
         let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
 
-        results.forEach((item, index) => {
-          // Extract nested paragraph object or top-level item
+        // Process top 20 results to avoid overloading the API
+        const topResults = results.slice(0, 20);
+        
+        // Step 2: Fetch the full details for each result concurrently
+        const detailedResults = await Promise.all(topResults.map(async (item) => {
           const p = item.paragraph || item;
-
-          // Extract title & paragraph reference (e.g., "Paragraph 21.3 — Financial Privilege")
-          const ref = p.reference || p.paragraphPrefix || p.number || '';
-          const title = p.title || p.chapterTitle || p.sectionTitle || p.heading || '';
+          const ref = p.reference || p.paragraphPrefix || p.number || p.id || '';
+          const title = p.title || p.chapterTitle || p.sectionTitle || p.heading || 'Erskine May Section';
           
-          let headerText = '';
-          if (ref) headerText += `Paragraph ${ref}`;
-          if (title) headerText += (headerText ? ` — ${title}` : title);
-          if (!headerText) headerText = `Result #${index + 1}`;
+          let fullText = extractTextFromObject(item);
+          let linkUrl = "#";
 
-          // Extract actual content text
-          const bodyText = p.htmlContent || p.contentTextHtml || p.contentText || p.content || p.snippet || p.text || 'No preview text available.';
+          // If the search result didn't contain the full text, fetch the specific paragraph endpoint
+          if (ref && fullText.length < 100) {
+            try {
+              const paraUrl = `https://erskinemay-api.parliament.uk/api/Search/Paragraph/${encodeURIComponent(ref)}`;
+              const paraRes = await fetch(paraUrl);
+              if (paraRes.ok) {
+                const paraData = await paraRes.json();
+                fullText = extractTextFromObject(paraData) || fullText;
+                if (paraData.url) linkUrl = paraData.url;
+              }
+            } catch (e) {
+              console.warn("Could not fetch paragraph details for", ref);
+            }
+          }
+
+          // Fallback URL if the API doesn't provide a direct link to the section
+          if (linkUrl === "#" && ref) {
+              linkUrl = `https://erskinemay.parliament.uk/search?q=${encodeURIComponent(query)}`;
+          }
+
+          return { ref, title, fullText, linkUrl };
+        }));
+
+        // Step 3: Render the UI with snippets
+        detailedResults.forEach((res, index) => {
+          let headerText = res.ref ? `Paragraph ${res.ref} — ${res.title}` : res.title;
+          const snippet = createSnippet(res.fullText, query);
 
           html += `
             <div class="result-card">
               <div class="card-title">${headerText}</div>
-              <div class="snippet-text">${bodyText}</div>
+              <div class="snippet-text">${snippet}</div>
+              <a href="${res.linkUrl}" target="_blank" class="read-more">Read full text on Erskine May &rarr;</a>
             </div>
           `;
         });
@@ -141,6 +252,8 @@
       } catch (err) {
         console.error(err);
         container.innerHTML = '<p style="color:red;">Error fetching search results. Please check your network connection.</p>';
+      } finally {
+        btn.disabled = false;
       }
     }
 
