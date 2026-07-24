@@ -12,7 +12,7 @@
       padding: 0 20px;
       line-height: 1.6;
       color: #333;
-      background-color: #fdfdfd;
+      background-color: #fcfcfc;
     }
     h1 { color: #005a36; margin-bottom: 4px; } /* UK Parliament Green */
     .subtitle { color: #666; margin-top: 0; margin-bottom: 25px; }
@@ -57,37 +57,40 @@
     .card-title {
       font-weight: bold;
       color: #005a36;
-      font-size: 1.15em;
+      font-size: 1.1em;
       margin-bottom: 10px;
       padding-bottom: 6px;
       border-bottom: 1px solid #f0f0f0;
     }
     .snippet-text {
-      color: #444;
+      color: #333;
       margin-bottom: 12px;
+      font-size: 15px;
     }
-    .read-btn {
-      padding: 8px 14px;
-      font-size: 14px;
-      background-color: #f4f4f4;
-      color: #005a36;
-      border: 1px solid #005a36;
+    .snippet-text mark {
+      background-color: #ffe58f;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+    .raw-debug {
+      margin-top: 10px;
+      font-family: monospace;
+      font-size: 11px;
+      background: #eee;
+      padding: 8px;
       border-radius: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      margin-top: 5px;
-    }
-    .read-btn:hover {
-      background-color: #005a36;
-      color: white;
-    }
-    .full-explanation-box {
-      margin-top: 15px;
-      padding: 15px;
-      background-color: #f8faf8;
-      border: 1px solid #d4e4dc;
-      border-radius: 6px;
+      max-height: 120px;
+      overflow-y: auto;
       display: none;
+    }
+    .toggle-debug-btn {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
     }
     .loading { color: #666; font-style: italic; }
   </style>
@@ -124,34 +127,43 @@
 
         const data = await response.json();
         
-        // Erskine May API delivers results in .searchResults array
-        const results = data.searchResults || (Array.isArray(data) ? data : []);
+        // Find results list inside API response safely
+        const results = data.searchResults || data.items || (Array.isArray(data) ? data : []);
 
         if (!results || results.length === 0) {
           container.innerHTML = '<p>No matching paragraphs found for that term.</p>';
           return;
         }
 
-        let html = `<p>Found <strong>${results.length}</strong> matching paragraph(s):</p>`;
+        let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
 
         results.forEach((item, index) => {
-          // Extract title or reference safely
-          const ref = item.reference || item.paragraphPrefix || item.number || '';
-          const title = item.title || item.chapterTitle || item.sectionTitle || 'Procedure Match';
+          // Recursive helper to scan for paragraph text in all common nested keys
+          let bodyText = findProperty(item, ['contentTextHtml', 'contentText', 'snippet', 'text', 'html', 'content', 'contentHtml']);
           
-          const headerText = ref ? `Paragraph ${ref} — ${title}` : title;
+          // Recursive helper to scan for paragraph number or reference
+          let refNumber = findProperty(item, ['paragraphNumber', 'paragraphPrefix', 'reference', 'paragraphRef', 'number', 'code']);
+          
+          // Recursive helper to scan for chapter/section title
+          let title = findProperty(item, ['title', 'chapterTitle', 'sectionTitle', 'heading', 'name']);
 
-          // Extract text snippet
-          const snippetHtml = item.contentTextHtml || item.contentText || item.snippet || item.text || 'No preview text available.';
+          // Construct header label
+          let headerText = '';
+          if (refNumber) headerText += `Paragraph ${refNumber}`;
+          if (title && title !== headerText) headerText += (headerText ? ` — ${title}` : title);
+          if (!headerText) headerText = `Result #${index + 1}`;
+
+          // Fallback text if no body key matched
+          if (!bodyText) {
+            bodyText = '<em>Snippet content missing in API search index.</em>';
+          }
 
           html += `
             <div class="result-card">
               <div class="card-title">${headerText}</div>
-              <div class="snippet-text">${snippetHtml}</div>
-              
-              ${ref ? `<button class="read-btn" onclick="toggleFullExplanation('${ref}', this)">Read Full Explanation</button>` : ''}
-              
-              <div class="full-explanation-box"></div>
+              <div class="snippet-text">${bodyText}</div>
+              <button class="toggle-debug-btn" onclick="toggleDebug(this)">Show Raw API Data</button>
+              <pre class="raw-debug">${escapeHtml(JSON.stringify(item, null, 2))}</pre>
             </div>
           `;
         });
@@ -160,60 +172,43 @@
 
       } catch (err) {
         console.error(err);
-        container.innerHTML = '<p style="color:red;">Error fetching search results. Please try again.</p>';
+        container.innerHTML = '<p style="color:red;">Error fetching search results. Please check your browser console.</p>';
       }
     }
 
-    async function toggleFullExplanation(ref, buttonElem) {
-      const card = buttonElem.parentElement;
-      const fullBox = card.querySelector('.full-explanation-box');
+    // Deep search function to locate text fields regardless of nesting level
+    function findProperty(obj, keys) {
+      if (!obj || typeof obj !== 'object') return null;
 
-      // If already open, close it
-      if (fullBox.style.display === 'block') {
-        fullBox.style.display = 'none';
-        buttonElem.innerText = 'Read Full Explanation';
-        return;
-      }
-
-      // If text was already loaded previously, just show it
-      if (fullBox.dataset.loaded === "true") {
-        fullBox.style.display = 'block';
-        buttonElem.innerText = 'Hide Full Explanation';
-        return;
-      }
-
-      buttonElem.innerText = 'Loading full text...';
-
-      try {
-        // Fetch full text for this paragraph reference
-        const fetchUrl = `https://erskinemay-api.parliament.uk/api/Search/Paragraph/${encodeURIComponent(ref)}`;
-        const response = await fetch(fetchUrl);
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const detail = await response.json();
-
-        // Safe extraction of full text across potential API response formats
-        let fullText = detail.contentTextHtml || detail.contentText || detail.htmlContent || detail.content || '';
-
-        if (!fullText && detail.sections && Array.isArray(detail.sections)) {
-          fullText = detail.sections.map(s => s.contentTextHtml || s.contentText || '').join('<br><br>');
+      for (let key of keys) {
+        if (obj[key] && typeof obj[key] === 'string' && obj[key].trim() !== '') {
+          return obj[key];
         }
-
-        if (!fullText) {
-          fullText = '<p><em>Full text is contained within the preview above or unavailable for this item.</em></p>';
-        }
-
-        fullBox.innerHTML = fullText;
-        fullBox.style.display = 'block';
-        fullBox.dataset.loaded = "true";
-        buttonElem.innerText = 'Hide Full Explanation';
-
-      } catch (err) {
-        console.error('Error fetching full text:', err);
-        buttonElem.innerText = 'Read Full Explanation';
-        alert(`Could not load full text for Paragraph ${ref}.`);
       }
+
+      for (let childKey in obj) {
+        if (typeof obj[childKey] === 'object') {
+          let found = findProperty(obj[childKey], keys);
+          if (found) return found;
+        }
+      }
+
+      return null;
+    }
+
+    function toggleDebug(btn) {
+      const debugPre = btn.nextElementSibling;
+      if (debugPre.style.display === 'block') {
+        debugPre.style.display = 'none';
+        btn.innerText = 'Show Raw API Data';
+      } else {
+        debugPre.style.display = 'block';
+        btn.innerText = 'Hide Raw API Data';
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
     function handleKey(e) {
