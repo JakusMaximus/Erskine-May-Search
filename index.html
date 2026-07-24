@@ -67,31 +67,6 @@
       margin-bottom: 12px;
       font-size: 15px;
     }
-    .snippet-text mark {
-      background-color: #ffe58f;
-      padding: 2px 4px;
-      border-radius: 2px;
-    }
-    .raw-debug {
-      margin-top: 10px;
-      font-family: monospace;
-      font-size: 11px;
-      background: #eee;
-      padding: 8px;
-      border-radius: 4px;
-      max-height: 120px;
-      overflow-y: auto;
-      display: none;
-    }
-    .toggle-debug-btn {
-      background: none;
-      border: none;
-      color: #888;
-      font-size: 12px;
-      cursor: pointer;
-      text-decoration: underline;
-      padding: 0;
-    }
     .loading { color: #666; font-style: italic; }
   </style>
 </head>
@@ -125,10 +100,10 @@
 
         if (!response.ok) throw new Error('Search request failed');
 
-        const data = await response.json();
+        const rawData = await response.json();
         
-        // Find results list inside API response safely
-        const results = data.searchResults || data.items || (Array.isArray(data) ? data : []);
+        // Erskine May returns items either directly in array or in searchResults
+        const results = Array.isArray(rawData) ? rawData : (rawData.searchResults || rawData.items || []);
 
         if (!results || results.length === 0) {
           container.innerHTML = '<p>No matching paragraphs found for that term.</p>';
@@ -138,32 +113,25 @@
         let html = `<p>Found <strong>${results.length}</strong> matching result(s):</p>`;
 
         results.forEach((item, index) => {
-          // Recursive helper to scan for paragraph text in all common nested keys
-          let bodyText = findProperty(item, ['contentTextHtml', 'contentText', 'snippet', 'text', 'html', 'content', 'contentHtml']);
-          
-          // Recursive helper to scan for paragraph number or reference
-          let refNumber = findProperty(item, ['paragraphNumber', 'paragraphPrefix', 'reference', 'paragraphRef', 'number', 'code']);
-          
-          // Recursive helper to scan for chapter/section title
-          let title = findProperty(item, ['title', 'chapterTitle', 'sectionTitle', 'heading', 'name']);
+          // Extract nested paragraph object or top-level item
+          const p = item.paragraph || item;
 
-          // Construct header label
+          // Extract title & paragraph reference (e.g., "Paragraph 21.3 — Financial Privilege")
+          const ref = p.reference || p.paragraphPrefix || p.number || '';
+          const title = p.title || p.chapterTitle || p.sectionTitle || p.heading || '';
+          
           let headerText = '';
-          if (refNumber) headerText += `Paragraph ${refNumber}`;
-          if (title && title !== headerText) headerText += (headerText ? ` — ${title}` : title);
+          if (ref) headerText += `Paragraph ${ref}`;
+          if (title) headerText += (headerText ? ` — ${title}` : title);
           if (!headerText) headerText = `Result #${index + 1}`;
 
-          // Fallback text if no body key matched
-          if (!bodyText) {
-            bodyText = '<em>Snippet content missing in API search index.</em>';
-          }
+          // Extract actual content text
+          const bodyText = p.htmlContent || p.contentTextHtml || p.contentText || p.content || p.snippet || p.text || 'No preview text available.';
 
           html += `
             <div class="result-card">
               <div class="card-title">${headerText}</div>
               <div class="snippet-text">${bodyText}</div>
-              <button class="toggle-debug-btn" onclick="toggleDebug(this)">Show Raw API Data</button>
-              <pre class="raw-debug">${escapeHtml(JSON.stringify(item, null, 2))}</pre>
             </div>
           `;
         });
@@ -172,43 +140,8 @@
 
       } catch (err) {
         console.error(err);
-        container.innerHTML = '<p style="color:red;">Error fetching search results. Please check your browser console.</p>';
+        container.innerHTML = '<p style="color:red;">Error fetching search results. Please check your network connection.</p>';
       }
-    }
-
-    // Deep search function to locate text fields regardless of nesting level
-    function findProperty(obj, keys) {
-      if (!obj || typeof obj !== 'object') return null;
-
-      for (let key of keys) {
-        if (obj[key] && typeof obj[key] === 'string' && obj[key].trim() !== '') {
-          return obj[key];
-        }
-      }
-
-      for (let childKey in obj) {
-        if (typeof obj[childKey] === 'object') {
-          let found = findProperty(obj[childKey], keys);
-          if (found) return found;
-        }
-      }
-
-      return null;
-    }
-
-    function toggleDebug(btn) {
-      const debugPre = btn.nextElementSibling;
-      if (debugPre.style.display === 'block') {
-        debugPre.style.display = 'none';
-        btn.innerText = 'Show Raw API Data';
-      } else {
-        debugPre.style.display = 'block';
-        btn.innerText = 'Hide Raw API Data';
-      }
-    }
-
-    function escapeHtml(str) {
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
     function handleKey(e) {
